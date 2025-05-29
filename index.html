@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>スイカゲーム</title>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            font-family: 'Arial', sans-serif;
+            background-color: #f0f8ff; /* AliceBlue */
+            margin: 0;
+            padding-top: 20px;
+            color: #333;
+        }
+        #gameArea {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        canvas#gameCanvas {
+            border: 2px solid #4682b4; /* SteelBlue */
+            background-color: #fffafa; /* Snow */
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        #controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 400px;
+            margin-top: 15px;
+            padding: 10px;
+            background-color: #e6e6fa; /* Lavender */
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        #scoreBoard, #nextFruitDisplayContainer {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #2f4f4f; /* DarkSlateGray */
+        }
+        #nextFruitCanvas {
+            width: 40px;
+            height: 40px;
+            border: 1px solid #b0c4de; /* LightSteelBlue */
+            border-radius: 4px;
+            margin-left: 10px;
+        }
+        #nextFruitDisplayContainer {
+            display: flex;
+            align-items: center;
+        }
+        button {
+            padding: 10px 18px;
+            font-size: 1em;
+            cursor: pointer;
+            border-radius: 5px;
+            border: none;
+            background-color: #5f9ea0; /* CadetBlue */
+            color: white;
+            transition: background-color 0.3s ease;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button:hover {
+            background-color: #53868b; /* Darker CadetBlue */
+        }
+        #gameOverMessage {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 30px 40px;
+            border-radius: 10px;
+            font-size: 1.8em;
+            text-align: center;
+            display: none;
+            z-index: 100;
+            box-shadow: 0 0 15px rgba(0,0,0,0.5);
+        }
+        #gameOverMessage button {
+            margin-top: 20px;
+            background-color: #ff6347; /* Tomato */
+        }
+        #gameOverMessage button:hover {
+            background-color: #e55337; /* Darker Tomato */
+        }
+        #dropLine {
+            position: absolute; 
+            width: 400px; 
+            height: 2px;
+            background-color: rgba(255, 0, 0, 0.3); 
+            z-index: 50;
+            display: none; 
+        }
+    </style>
+</head>
+<body>
+    <div id="gameArea">
+        <canvas id="gameCanvas"></canvas>
+        <div id="dropLine"></div>
+        <div id="controls">
+            <div id="scoreBoard">スコア: 0</div>
+            <div id="nextFruitDisplayContainer">
+                <span>次のフルーツ:</span>
+                <canvas id="nextFruitCanvas"></canvas>
+            </div>
+            <button id="resetButton">リセット</button>
+        </div>
+    </div>
+
+    <div id="gameOverMessage">
+        ゲームオーバー！<br>
+        <span id="finalScore"></span><br>
+        <button id="restartButton">もう一度遊ぶ</button>
+    </div>
+
+    <script>
+        // DOM Elements
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreBoard = document.getElementById('scoreBoard');
+        const nextFruitCanvas = document.getElementById('nextFruitCanvas');
+        const nextFruitCtx = nextFruitCanvas.getContext('2d');
+        const resetButton = document.getElementById('resetButton');
+        const gameOverMessageElement = document.getElementById('gameOverMessage');
+        const finalScoreElement = document.getElementById('finalScore');
+        const restartButton = document.getElementById('restartButton');
+        const dropLineElement = document.getElementById('dropLine');
+
+        // Canvas Dimensions
+        const CANVAS_WIDTH = 400;
+        const CANVAS_HEIGHT = 600;
+        canvas.width = CANVAS_WIDTH;
+        canvas.height = CANVAS_HEIGHT;
+        nextFruitCanvas.width = 40;
+        nextFruitCanvas.height = 40;
+
+        // Fruit Specifications
+        const FRUIT_TYPES = [
+            { radius: 10, color: '#FF6347', points: 1 },  // Tomato (Red)
+            { radius: 15, color: '#FFC0CB', points: 2 },  // Pink
+            { radius: 20, color: '#BA55D3', points: 4 },  // MediumPurple
+            { radius: 25, color: '#FFA500', points: 8 },  // Orange
+            { radius: 30, color: '#FFD700', points: 16 }, // Gold (Yellow)
+            { radius: 35, color: '#90EE90', points: 32 }, // LightGreen
+            { radius: 40, color: '#008000', points: 64 }, // Green
+            { radius: 45, color: '#ADD8E6', points: 128 },// LightBlue
+            { radius: 50, color: '#0000FF', points: 256 } // Blue
+        ];
+        const MAX_FRUIT_INDEX = FRUIT_TYPES.length - 1;
+
+        // Physics Constants
+        const GRAVITY = 0.3;
+        const RESTITUTION = 0.05; 
+        const FRICTION_HORIZONTAL_DAMPING = 0.99;
+        const COLLISION_ITERATIONS = 8; 
+        const MERGE_SPEED_THRESHOLD = 3.8; 
+        const MIN_VELOCITY_FOR_ACTIVITY = 0.02;
+
+        // Game State
+        let fruits = [];
+        let score = 0;
+        let currentDroppingFruitTypeIndex = 0;
+        let nextFruitTypeIndex = 0;
+        let gameState = 'playing';
+        let mousePos = { x: CANVAS_WIDTH / 2, y: 50 };
+        let gameOverTimer = 0;
+        const GAME_OVER_LINE_Y = 80;
+        const DROP_Y_POSITION = 40;
+        let lastTime = 0;
+        let fruitIdCounter = 0;
+
+        // --- Fruit Class/Object Factory ---
+        function createFruit(x, y, typeIndex, vx = 0, vy = 0, isPlayerDropped = false) {
+            const type = FRUIT_TYPES[typeIndex];
+            return {
+                id: fruitIdCounter++,
+                x, y,
+                vx, vy,
+                radius: type.radius,
+                color: type.color,
+                points: type.points,
+                typeIndex,
+                mass: Math.PI * type.radius * type.radius,
+                onGround: false,
+                isPlayerDropped,
+                markedForRemoval: false,
+                isMerging: false 
+            };
+        }
+
+        // --- Game Initialization ---
+        function initGame() {
+            fruits = [];
+            score = 0;
+            updateScoreUI();
+            gameState = 'playing';
+            gameOverMessageElement.style.display = 'none';
+            gameOverTimer = 0;
+            fruitIdCounter = 0;
+            
+            const canvasRect = canvas.getBoundingClientRect();
+            dropLineElement.style.top = `${canvasRect.top + window.scrollY + GAME_OVER_LINE_Y}px`;
+            dropLineElement.style.left = `${canvasRect.left + window.scrollX}px`;
+            dropLineElement.style.display = 'block';
+
+            prepareFirstFruits();
+            lastTime = performance.now();
+            if (gameState !== 'gameover-halt' && !gameLoopId) { 
+                gameLoopId = requestAnimationFrame(gameLoop);
+            }
+        }
+
+        function prepareFirstFruits() {
+            currentDroppingFruitTypeIndex = Math.floor(Math.random() * 3);
+            nextFruitTypeIndex = Math.floor(Math.random() * 3);
+            drawNextFruitIndicator();
+        }
+
+        // --- Game Loop ---
+        let gameLoopId = null; 
+        function gameLoop(timestamp = 0) {
+            const deltaTime = timestamp - lastTime;
+            lastTime = timestamp;
+
+            if (gameState === 'playing') {
+                updateGame(deltaTime);
+            }
+            drawGame();
+
+            if (gameState !== 'gameover-halt') {
+                 gameLoopId = requestAnimationFrame(gameLoop);
+            } else {
+                gameLoopId = null; 
+            }
+        }
+
+        // --- Update Game Logic ---
+        function updateGame(deltaTime) {
+            if (isNaN(deltaTime) || deltaTime <= 0 || deltaTime > 100) deltaTime = 16.67; 
+
+            fruits.forEach(fruit => {
+                if (fruit.markedForRemoval) return;
+                fruit.vy += GRAVITY;
+                fruit.vx *= FRICTION_HORIZONTAL_DAMPING;
+                if (Math.abs(fruit.vx) < MIN_VELOCITY_FOR_ACTIVITY * 0.5) fruit.vx = 0;
+                if (Math.abs(fruit.vy) < MIN_VELOCITY_FOR_ACTIVITY * 0.5 && fruit.onGround) fruit.vy = 0;
+
+                fruit.x += fruit.vx;
+                fruit.y += fruit.vy;
+            });
+
+            fruits.forEach(f => f.isMerging = false);
+
+            for (let iter = 0; iter < COLLISION_ITERATIONS; iter++) {
+                handleWallCollisions();
+                handleFruitCollisions();
+            }
+            
+            handleMerges(); 
+            fruits = fruits.filter(f => !f.markedForRemoval); 
+            checkGameOver(deltaTime);
+        }
+
+        // --- Collision Handling ---
+        function handleWallCollisions() {
+            fruits.forEach(fruit => {
+                if (fruit.markedForRemoval) return;
+                if (fruit.y + fruit.radius > CANVAS_HEIGHT) {
+                    fruit.y = CANVAS_HEIGHT - fruit.radius;
+                    fruit.vy *= -RESTITUTION;
+                    if (Math.abs(fruit.vy) < MIN_VELOCITY_FOR_ACTIVITY) fruit.vy = 0;
+                    fruit.onGround = true;
+                    if (fruit.isPlayerDropped) fruit.isPlayerDropped = false;
+                } else {
+                    fruit.onGround = false; 
+                }
+
+                if (fruit.x - fruit.radius < 0) {
+                    fruit.x = fruit.radius;
+                    fruit.vx *= -RESTITUTION;
+                     if (Math.abs(fruit.vx) < MIN_VELOCITY_FOR_ACTIVITY) fruit.vx = 0;
+                    if (fruit.isPlayerDropped) fruit.isPlayerDropped = false;
+                }
+                if (fruit.x + fruit.radius > CANVAS_WIDTH) {
+                    fruit.x = CANVAS_WIDTH - fruit.radius;
+                    fruit.vx *= -RESTITUTION;
+                    if (Math.abs(fruit.vx) < MIN_VELOCITY_FOR_ACTIVITY) fruit.vx = 0;
+                    if (fruit.isPlayerDropped) fruit.isPlayerDropped = false;
+                }
+                if (fruit.y - fruit.radius < 0) {
+                    fruit.y = fruit.radius;
+                    fruit.vy *= -RESTITUTION; 
+                    if (Math.abs(fruit.vy) < MIN_VELOCITY_FOR_ACTIVITY) fruit.vy = 0;
+                }
+            });
+        }
+
+        function handleFruitCollisions() {
+            for (let i = 0; i < fruits.length; i++) {
+                if (fruits[i].markedForRemoval || fruits[i].isMerging) continue;
+                for (let j = i + 1; j < fruits.length; j++) {
+                    if (fruits[j].markedForRemoval || fruits[j].isMerging) continue;
+
+                    const f1 = fruits[i];
+                    const f2 = fruits[j];
+
+                    const dx = f2.x - f1.x;
+                    const dy = f2.y - f1.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    const minDistance = f1.radius + f2.radius;
+
+                    if (distance < minDistance && distance > 0.001) { 
+                        if (f1.isPlayerDropped) f1.isPlayerDropped = false;
+                        if (f2.isPlayerDropped) f2.isPlayerDropped = false;
+                        
+                        const overlap = (minDistance - distance);
+                        const nx = dx / distance; 
+                        const ny = dy / distance; 
+
+                        const totalMass = f1.mass + f2.mass;
+                        const f1Move = totalMass > 0 ? overlap * (f2.mass / totalMass) : overlap * 0.5;
+                        const f2Move = totalMass > 0 ? overlap * (f1.mass / totalMass) : overlap * 0.5;
+
+                        f1.x -= f1Move * nx;
+                        f1.y -= f1Move * ny;
+                        f2.x += f2Move * nx;
+                        f2.y += f2Move * ny;
+                        
+                        const relVx = f1.vx - f2.vx;
+                        const relVy = f1.vy - f2.vy;
+                        const velAlongNormal = relVx * nx + relVy * ny;
+
+                        if (velAlongNormal > 0) {
+                            const invMass1 = 1 / f1.mass;
+                            const invMass2 = 1 / f2.mass;
+                            const invMassSum = invMass1 + invMass2;
+                            if (invMassSum <= 0) continue; 
+
+                            let impulseMagnitude = -(1 + RESTITUTION) * velAlongNormal;
+                            impulseMagnitude /= invMassSum;
+
+                            const impulseX = impulseMagnitude * nx;
+                            const impulseY = impulseMagnitude * ny;
+
+                            f1.vx += impulseX * invMass1; 
+                            f1.vy += impulseY * invMass1;
+                            f2.vx -= impulseX * invMass2;
+                            f2.vy -= impulseY * invMass2;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // --- Merge Handling ---
+        function handleMerges() {
+            let mergedHappenedThisCycle = false;
+            for (let i = 0; i < fruits.length; i++) {
+                const f1 = fruits[i];
+                if (f1.markedForRemoval || f1.isMerging) continue; // Max fruit check moved inside type check
+
+                for (let j = i + 1; j < fruits.length; j++) {
+                    const f2 = fruits[j];
+                    if (f2.markedForRemoval || f2.isMerging) continue; // Max fruit check moved inside type check
+
+                    if (f1.typeIndex === f2.typeIndex) {
+                        const dx = f2.x - f1.x;
+                        const dy = f2.y - f1.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const combinedRadius = f1.radius + f2.radius;
+                        const mergeDistanceThreshold = combinedRadius + 0.5; 
+
+                        if (distance < mergeDistanceThreshold) { 
+                            const speed1 = Math.sqrt(f1.vx * f1.vx + f1.vy * f1.vy);
+                            const speed2 = Math.sqrt(f2.vx * f2.vx + f2.vy * f2.vy);
+
+                            if (speed1 < MERGE_SPEED_THRESHOLD && speed2 < MERGE_SPEED_THRESHOLD) {
+                                f1.markedForRemoval = true;
+                                f2.markedForRemoval = true;
+                                f1.isMerging = true; 
+                                f2.isMerging = true; 
+
+                                score += FRUIT_TYPES[f1.typeIndex].points * 2; // Score for merging
+                                updateScoreUI();
+
+                                // **MODIFIED**: Check if it's the largest fruit
+                                if (f1.typeIndex === MAX_FRUIT_INDEX) {
+                                    // Largest fruits just disappear, no new fruit
+                                    // console.log(`MAX MERGED & DISAPPEARED: ${f1.id}(${f1.typeIndex}) & ${f2.id}(${f2.typeIndex})`);
+                                    // Score is already added above. Could add a bonus here if desired.
+                                    // e.g. score += 500; updateScoreUI();
+                                } else {
+                                    // Not the largest, so create the next size up
+                                    const newTypeIndex = f1.typeIndex + 1;
+                                    const newX = (f1.x * f1.radius + f2.x * f2.radius) / (f1.radius + f2.radius); 
+                                    const newY = (f1.y * f1.radius + f2.y * f2.radius) / (f1.radius + f2.radius);
+                                    const newVx = (f1.vx * f1.mass + f2.vx * f2.mass) / (f1.mass + f2.mass + (FRUIT_TYPES[newTypeIndex] ? FRUIT_TYPES[newTypeIndex].radius**2 * Math.PI : f1.mass + f2.mass)) * 0.1;
+                                    const newVy = (f1.vy * f1.mass + f2.vy * f2.mass) / (f1.mass + f2.mass + (FRUIT_TYPES[newTypeIndex] ? FRUIT_TYPES[newTypeIndex].radius**2 * Math.PI : f1.mass + f2.mass)) * 0.1;
+
+                                    const newFruit = createFruit(newX, newY, newTypeIndex, newVx, newVy);
+                                    newFruit.isMerging = true; 
+                                    fruits.push(newFruit);
+                                    // console.log(`MERGED: ${f1.id}(${f1.typeIndex}) & ${f2.id}(${f2.typeIndex}) into new type ${newTypeIndex}`);
+                                }
+                                
+                                mergedHappenedThisCycle = true; 
+                                break; 
+                            }
+                        }
+                    }
+                }
+                if (mergedHappenedThisCycle && f1.markedForRemoval) {
+                    mergedHappenedThisCycle = false; 
+                    i = -1; 
+                    continue;
+                }
+            }
+        }
+
+        // --- Game Over Check ---
+        function checkGameOver(deltaTime) {
+            let isAnyFruitAboveLineAndStable = false;
+            for (const fruit of fruits) {
+                if (fruit.markedForRemoval) continue;
+                if (!fruit.isPlayerDropped && !fruit.isMerging && (fruit.y - fruit.radius) < GAME_OVER_LINE_Y) {
+                    if (Math.abs(fruit.vy) < 0.2 && Math.abs(fruit.vx) < 0.2) { 
+                        isAnyFruitAboveLineAndStable = true;
+                        break;
+                    }
+                }
+            }
+
+            if (isAnyFruitAboveLineAndStable) {
+                gameOverTimer += deltaTime;
+                if (gameOverTimer > 2000) { 
+                    triggerGameOver();
+                }
+            } else {
+                gameOverTimer = 0;
+            }
+        }
+
+        function triggerGameOver() {
+            gameState = 'gameover';
+            finalScoreElement.textContent = `最終スコア: ${score}`;
+            gameOverMessageElement.style.display = 'flex';
+            if (gameLoopId) { 
+                cancelAnimationFrame(gameLoopId);
+                gameLoopId = null;
+            }
+        }
+
+        // --- Drawing ---
+        function drawGame() {
+            ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            fruits.forEach(fruit => {
+                if (fruit.markedForRemoval) return;
+                ctx.beginPath();
+                ctx.arc(fruit.x, fruit.y, fruit.radius, 0, Math.PI * 2);
+                ctx.fillStyle = fruit.color;
+                ctx.fill();
+                ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            });
+
+            if (gameState === 'playing') {
+                if (FRUIT_TYPES[currentDroppingFruitTypeIndex]) {
+                    const previewFruitSpec = FRUIT_TYPES[currentDroppingFruitTypeIndex];
+                    const previewX = Math.max(previewFruitSpec.radius, Math.min(mousePos.x, CANVAS_WIDTH - previewFruitSpec.radius));
+                    
+                    ctx.beginPath();
+                    ctx.arc(previewX, DROP_Y_POSITION, previewFruitSpec.radius, 0, Math.PI * 2);
+                    ctx.fillStyle = previewFruitSpec.color;
+                    ctx.globalAlpha = 0.6;
+                    ctx.fill();
+                    ctx.globalAlpha = 1.0;
+                    ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+                    ctx.stroke();
+                }
+            }
+        }
+        
+        function drawNextFruitIndicator() {
+            nextFruitCtx.clearRect(0, 0, nextFruitCanvas.width, nextFruitCanvas.height);
+            if (gameState !== 'gameover' && FRUIT_TYPES[nextFruitTypeIndex]) {
+                const fruitSpec = FRUIT_TYPES[nextFruitTypeIndex];
+                const displayRadius = Math.min(18, fruitSpec.radius * 0.8);
+                nextFruitCtx.beginPath();
+                nextFruitCtx.arc(nextFruitCanvas.width / 2, nextFruitCanvas.height / 2, displayRadius, 0, Math.PI * 2);
+                nextFruitCtx.fillStyle = fruitSpec.color;
+                nextFruitCtx.fill();
+                nextFruitCtx.strokeStyle = 'rgba(0,0,0,0.2)';
+                nextFruitCtx.stroke();
+            }
+        }
+
+        // --- UI Updates ---
+        function updateScoreUI() {
+            scoreBoard.textContent = `スコア: ${score}`;
+        }
+
+        // --- Event Listeners ---
+        canvas.addEventListener('mousemove', (e) => {
+            if (gameState !== 'playing') return;
+            const rect = canvas.getBoundingClientRect();
+            mousePos.x = e.clientX - rect.left;
+        });
+
+        canvas.addEventListener('click', () => {
+            if (gameState === 'playing') {
+                if (FRUIT_TYPES[currentDroppingFruitTypeIndex]) {
+                    const fruitSpec = FRUIT_TYPES[currentDroppingFruitTypeIndex];
+                    const dropX = Math.max(fruitSpec.radius, Math.min(mousePos.x, CANVAS_WIDTH - fruitSpec.radius));
+                    
+                    const newFruit = createFruit(dropX, DROP_Y_POSITION, currentDroppingFruitTypeIndex, 0, 1, true);
+                    fruits.push(newFruit);
+
+                    currentDroppingFruitTypeIndex = nextFruitTypeIndex;
+                    nextFruitTypeIndex = Math.floor(Math.random() * 3);
+                    drawNextFruitIndicator();
+                } else {
+                    console.error("Invalid currentDroppingFruitTypeIndex:", currentDroppingFruitTypeIndex);
+                    currentDroppingFruitTypeIndex = 0; 
+                    nextFruitTypeIndex = Math.floor(Math.random() * 3);
+                    drawNextFruitIndicator();
+                }
+            }
+        });
+
+        resetButton.addEventListener('click', () => {
+            if (gameLoopId) { 
+                cancelAnimationFrame(gameLoopId);
+                gameLoopId = null;
+            }
+            if (gameState === 'gameover') {
+                 gameOverMessageElement.style.display = 'none';
+            }
+            initGame(); 
+        });
+
+        restartButton.addEventListener('click', () => { 
+            if (gameLoopId) { 
+                cancelAnimationFrame(gameLoopId);
+                gameLoopId = null;
+            }
+            gameOverMessageElement.style.display = 'none';
+            initGame(); 
+        });
+        
+        // --- Start Game ---
+        initGame();
+
+    </script>
+</body>
+</html>
